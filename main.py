@@ -14,11 +14,20 @@ url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
-# 2. Configurazione AI (Gemini 1.5 Flash per massima stabilità)
+# 2. Configurazione AI (Sbloccata per termini professionali)
 api_key_ai = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=api_key_ai)
-# Usiamo il modello Flash che è meno soggetto a errori di quota/tempo
-ai_model = genai.GenerativeModel('gemini-1.5-flash')
+
+# CONFIGURAZIONE SBLOCCATA:
+ai_model = genai.GenerativeModel(
+    model_name='gemini-1.5-flash',
+    safety_settings=[
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+    ]
+)
 
 app = FastAPI()
 
@@ -171,3 +180,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
