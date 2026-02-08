@@ -7,7 +7,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# Carichiamo le chiavi dal file .env
+# Carichiamo le chiavi dal file .env (o dalle variabili d'ambiente di Render)
 load_dotenv()
 url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
@@ -15,6 +15,7 @@ supabase: Client = create_client(url, key)
 
 app = FastAPI()
 
+# Configurazione CORS per permettere a Vercel di parlare con Render
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,7 +24,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- MODELLI ---
+# --- MODELLI DATI (Pydantic) ---
+
+class ProfessionistaCreate(BaseModel):
+    nome: str
+    cognome: str
+    email: str
+    password: str
+    titolo_professionale: Optional[str] = ""
+    descrizione: Optional[str] = ""
+    immagine_profilo: Optional[str] = ""
+    immagine_copertina: Optional[str] = ""
+
 class PostCreate(BaseModel):
     autore: str
     contenuto: str
@@ -35,15 +47,45 @@ class MessaggioP2P(BaseModel):
     file_data: Optional[str] = None
     file_name: Optional[str] = None
 
-# --- ENDPOINTS POST (SUPABASE) ---
+# --- ENDPOINTS PROFESSIONISTI (REGISTRAZIONE E LOGIN) ---
+
+@app.post("/registrazione")
+def registrazione(prof: ProfessionistaCreate):
+    try:
+        data = {
+            "nome": prof.nome,
+            "cognome": prof.cognome,
+            "email": prof.email,
+            "password": prof.password, 
+            "titolo_professionale": prof.titolo_professionale,
+            "descrizione": prof.descrizione,
+            "immagine_profilo": prof.immagine_profilo,
+            "immagine_copertina": prof.immagine_copertina
+        }
+        response = supabase.table("professionisti").insert(data).execute()
+        return response.data
+    except Exception as e:
+        print(f"Errore registrazione: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/login")
+def login(credenziali: dict):
+    email = credenziali.get("email")
+    password = credenziali.get("password")
+    
+    try:
+        response = supabase.table("professionisti").select("*").eq("email", email).eq("password", password).execute()
+        if not response.data or len(response.data) == 0:
+            raise HTTPException(status_code=401, detail="Email o password errati")
+        return response.data[0]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- ENDPOINTS POST ---
+
 @app.get("/posts")
 def get_all_posts():
     response = supabase.table("posts").select("*").order("created_at", desc=True).execute()
-    return response.data
-
-@app.get("/posts/{autore}")
-def get_user_posts(autore: str):
-    response = supabase.table("posts").select("*").eq("autore", autore).order("created_at", desc=True).execute()
     return response.data
 
 @app.post("/posts/crea")
@@ -56,7 +98,8 @@ def crea_post(post: PostCreate):
     response = supabase.table("posts").insert(data).execute()
     return response.data
 
-# --- ENDPOINTS MESSAGGI (SUPABASE) ---
+# --- ENDPOINTS MESSAGGI ---
+
 @app.post("/messaggi/invia")
 def invia_messaggio(msg: MessaggioP2P):
     data = {
@@ -72,15 +115,25 @@ def invia_messaggio(msg: MessaggioP2P):
 
 @app.get("/messaggi/leggi/{u1}/{u2}")
 def leggi_chat(u1: str, u2: str):
-    # Query complessa: messaggi tra u1 e u2 OR tra u2 e u1
     response = supabase.table("messaggi").select("*").or_(f"and(mittente.eq.{u1},destinatario.eq.{u2}),and(mittente.eq.{u2},destinatario.eq.{u1})").order("created_at").execute()
     return response.data
 
-# --- ALTRI ENDPOINTS (News rimangono statiche per ora) ---
-@app.get("/news")
-def get_news():
-    return [{"id": 1, "titolo": "Nexum è Online!", "categoria": "Update", "riassunto": "Database collegato con successo.", "data": "Oggi"}]
+@app.get("/messaggi/conversazioni/{utente}")
+def get_conversazioni(utente: str):
+    # Recupera tutti i nomi delle persone con cui l'utente ha parlato
+    res = supabase.table("messaggi").select("mittente, destinatario").or_(f"mittente.eq.{utente},destinatario.eq.{utente}").execute()
+    nomi = set()
+    for m in res.data:
+        if m['mittente'] != utente: nomi.add(m['mittente'])
+        if m['destinatario'] != utente: nomi.add(m['destinatario'])
+    return list(nomi)
+
+# --- HOME / TEST ---
+
+@app.get("/")
+def home():
+    return {"status": "online", "message": "Nexum Backend API is running"}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
