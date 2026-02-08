@@ -8,18 +8,20 @@ from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# Caricamento variabili
+# 1. Configurazione Iniziale
 load_dotenv()
 url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
-# Configurazione Google Gemini AI
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-ai_model = genai.GenerativeModel('gemini-pro')
+# 2. Configurazione AI (Google Gemini)
+api_key_ai = os.environ.get("GEMINI_API_KEY")
+genai.configure(api_key=api_key_ai)
+ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
 app = FastAPI()
 
+# 3. Middleware CORS (Permette a Vercel di comunicare con Render)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,7 +30,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- MODELLI ---
+# --- MODELLI DATI (Pydantic) ---
+
 class ProfessionistaCreate(BaseModel):
     nome: str
     cognome: str
@@ -51,19 +54,20 @@ class MessaggioP2P(BaseModel):
     file_name: Optional[str] = None
 
 class ChatRequest(BaseModel):
-    messaggio: str
+    testo: str  # RISOLTO: Ora combacia perfettamente con il frontend
 
 class CommentoCreate(BaseModel):
     post_id: int
     autore: str
     testo: str
 
-# --- ENDPOINT DI BENVENUTO ---
-@app.get("/")
-def read_root():
-    return {"status": "online", "project": "Nexum API Professional"}
+# --- ENDPOINTS API ---
 
-# --- REGISTRAZIONE E LOGIN ---
+@app.get("/")
+def home():
+    return {"status": "online", "message": "Nexum API Professional v2.0"}
+
+# --- REGISTRAZIONE & LOGIN ---
 @app.post("/registrazione")
 async def registrazione(prof: ProfessionistaCreate):
     try:
@@ -93,7 +97,11 @@ def get_posts():
 
 @app.post("/posts/crea")
 def crea_post(post: PostCreate):
-    data = {"autore": post.autore, "contenuto": post.contenuto, "data": datetime.now().strftime("%d/%m/%Y")}
+    data = {
+        "autore": post.autore, 
+        "contenuto": post.contenuto, 
+        "data": datetime.now().strftime("%d/%m/%Y")
+    }
     return supabase.table("posts").insert(data).execute().data
 
 @app.get("/posts/{post_id}/commenti")
@@ -106,8 +114,7 @@ def get_commenti(post_id: int):
 
 @app.post("/commenti/crea")
 def crea_commento(comm: CommentoCreate):
-    data = comm.dict()
-    return supabase.table("commenti").insert(data).execute().data
+    return supabase.table("commenti").insert(comm.dict()).execute().data
 
 # --- MESSAGGI ---
 @app.get("/messaggi/conversazioni/{utente}")
@@ -137,25 +144,24 @@ def get_notifiche(utente: str):
         return []
 
 # --- ASSISTENTE AI ---
-# --- ASSISTENTE AI (Aggiornato) ---
-@app.post("/chat") # Cambiato da /ai/chat a /chat per allinearsi al frontend
+@app.post("/chat") # RISOLTO: Cambiato da /ai/chat a /chat per matchare il frontend
 async def chat_ai(req: ChatRequest):
     try:
-        # Usiamo il modello più recente e stabile
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(f"Rispondi come l'assistente ufficiale di Nexum: {req.messaggio}")
+        # Usiamo req.testo che arriva correttamente dal popup
+        prompt = f"Sei l'assistente AI di Nexum. Rispondi come un consulente professionale e conciso: {req.testo}"
+        response = ai_model.generate_content(prompt)
         return {"risposta": response.text}
     except Exception as e:
         print(f"Errore AI: {e}")
-        return {"risposta": "Spiacente, sto ricaricando i moduli. Riprova tra un istante!"}
+        return {"risposta": "Spiacente, l'assistente AI è momentaneamente occupato. Riprova tra un istante."}
 
 # --- NEWS ---
 @app.get("/news")
 def get_news():
-    return [{"id": 1, "titolo": "Nexum Fase Pro", "categoria": "Update", "riassunto": "AI e Notifiche attive.", "data": "Oggi"}]
+    return [{"id": 1, "titolo": "Nexum Online", "categoria": "Update", "riassunto": "Tutti i sistemi sono operativi.", "data": "Oggi"}]
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
+    # Render usa la porta 10000 o quella definita nell'ambiente
+    port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
