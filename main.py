@@ -137,14 +137,17 @@ def get_notifiche(utente: str):
         return []
 
 # --- ASSISTENTE AI ---
-@app.post("/ai/chat")
+# --- ASSISTENTE AI (Aggiornato) ---
+@app.post("/chat") # Cambiato da /ai/chat a /chat per allinearsi al frontend
 async def chat_ai(req: ChatRequest):
     try:
-        prompt = f"Sei l'assistente legale AI di Nexum. Rispondi in modo professionale e conciso: {req.messaggio}"
-        response = ai_model.generate_content(prompt)
+        # Usiamo il modello più recente e stabile
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(f"Rispondi come l'assistente ufficiale di Nexum: {req.messaggio}")
         return {"risposta": response.text}
     except Exception as e:
-        return {"risposta": "Servizio AI momentaneamente non disponibile."}
+        print(f"Errore AI: {e}")
+        return {"risposta": "Spiacente, sto ricaricando i moduli. Riprova tra un istante!"}
 
 # --- NEWS ---
 @app.get("/news")
@@ -155,3 +158,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
