@@ -1,4 +1,5 @@
 import os
+import google.generativeai as genai
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -7,10 +8,15 @@ from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+# Caricamento variabili
 load_dotenv()
 url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
+
+# Configurazione Google Gemini AI
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+ai_model = genai.GenerativeModel('gemini-pro')
 
 app = FastAPI()
 
@@ -44,12 +50,20 @@ class MessaggioP2P(BaseModel):
     file_data: Optional[str] = None
     file_name: Optional[str] = None
 
-# --- ENDPOINT DI BENVENUTO (Per evitare il "Not Found") ---
+class ChatRequest(BaseModel):
+    messaggio: str
+
+class CommentoCreate(BaseModel):
+    post_id: int
+    autore: str
+    testo: str
+
+# --- ENDPOINT DI BENVENUTO ---
 @app.get("/")
 def read_root():
-    return {"status": "online", "project": "Nexum API"}
+    return {"status": "online", "project": "Nexum API Professional"}
 
-# --- REGISTRAZIONE ---
+# --- REGISTRAZIONE E LOGIN ---
 @app.post("/registrazione")
 async def registrazione(prof: ProfessionistaCreate):
     try:
@@ -57,10 +71,8 @@ async def registrazione(prof: ProfessionistaCreate):
         response = supabase.table("professionisti").insert(data).execute()
         return {"status": "success", "data": response.data}
     except Exception as e:
-        print(f"Errore: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- LOGIN ---
 @app.post("/login")
 async def login(credenziali: dict):
     email = credenziali.get("email")
@@ -70,21 +82,32 @@ async def login(credenziali: dict):
         raise HTTPException(status_code=401, detail="Credenziali errate")
     return response.data[0]
 
-# --- POSTS ---
+# --- POSTS E COMMENTI ---
 @app.get("/posts")
 def get_posts():
     try:
         res = supabase.table("posts").select("*").order("created_at", desc=True).execute()
-        # Se non ci sono post, restituiamo una lista vuota [] invece di errore
         return res.data if res.data else []
-    except Exception as e:
-        print(f"Errore caricamento post: {e}")
+    except Exception:
         return []
 
 @app.post("/posts/crea")
 def crea_post(post: PostCreate):
     data = {"autore": post.autore, "contenuto": post.contenuto, "data": datetime.now().strftime("%d/%m/%Y")}
     return supabase.table("posts").insert(data).execute().data
+
+@app.get("/posts/{post_id}/commenti")
+def get_commenti(post_id: int):
+    try:
+        res = supabase.table("commenti").select("*").eq("post_id", post_id).order("created_at").execute()
+        return res.data if res.data else []
+    except Exception:
+        return []
+
+@app.post("/commenti/crea")
+def crea_commento(comm: CommentoCreate):
+    data = comm.dict()
+    return supabase.table("commenti").insert(data).execute().data
 
 # --- MESSAGGI ---
 @app.get("/messaggi/conversazioni/{utente}")
@@ -104,15 +127,31 @@ def invia(msg: MessaggioP2P):
     data["timestamp"] = datetime.now().strftime("%H:%M")
     return supabase.table("messaggi").insert(data).execute().data
 
-# --- NEWS (Sostituito per evitare errori nel frontend) ---
+# --- NOTIFICHE ---
+@app.get("/notifiche/{utente}")
+def get_notifiche(utente: str):
+    try:
+        res = supabase.table("notifiche").select("*").eq("destinatario", utente).order("created_at", desc=True).execute()
+        return res.data if res.data else []
+    except Exception:
+        return []
+
+# --- ASSISTENTE AI ---
+@app.post("/ai/chat")
+async def chat_ai(req: ChatRequest):
+    try:
+        prompt = f"Sei l'assistente legale AI di Nexum. Rispondi in modo professionale e conciso: {req.messaggio}"
+        response = ai_model.generate_content(prompt)
+        return {"risposta": response.text}
+    except Exception as e:
+        return {"risposta": "Servizio AI momentaneamente non disponibile."}
+
+# --- NEWS ---
 @app.get("/news")
 def get_news():
-    return [
-        {"id": 1, "titolo": "Benvenuto in Nexum", "categoria": "System", "riassunto": "La piattaforma è attiva.", "data": "Oggi"}
-    ]
+    return [{"id": 1, "titolo": "Nexum Fase Pro", "categoria": "Update", "riassunto": "AI e Notifiche attive.", "data": "Oggi"}]
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
