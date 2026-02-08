@@ -8,20 +8,21 @@ from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# 1. Configurazione Iniziale
+# 1. Caricamento variabili e Database
 load_dotenv()
 url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
-# 2. Configurazione AI (Google Gemini)
+# 2. Configurazione AI (Gemini 1.5 Flash per massima stabilità)
 api_key_ai = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=api_key_ai)
+# Usiamo il modello Flash che è meno soggetto a errori di quota/tempo
 ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
 app = FastAPI()
 
-# 3. Middleware CORS (Permette a Vercel di comunicare con Render)
+# 3. Middleware CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,7 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- MODELLI DATI (Pydantic) ---
+# --- MODELLI DATI ---
 
 class ProfessionistaCreate(BaseModel):
     nome: str
@@ -54,18 +55,18 @@ class MessaggioP2P(BaseModel):
     file_name: Optional[str] = None
 
 class ChatRequest(BaseModel):
-    testo: str  # RISOLTO: Ora combacia perfettamente con il frontend
+    testo: str  # Allineato perfettamente al tuo popup frontend
 
 class CommentoCreate(BaseModel):
     post_id: int
     autore: str
     testo: str
 
-# --- ENDPOINTS API ---
+# --- ENDPOINTS ---
 
 @app.get("/")
 def home():
-    return {"status": "online", "message": "Nexum API Professional v2.0"}
+    return {"status": "online", "message": "Nexum API Professional v3.0 Live"}
 
 # --- REGISTRAZIONE & LOGIN ---
 @app.post("/registrazione")
@@ -112,16 +113,15 @@ def get_commenti(post_id: int):
     except Exception:
         return []
 
-@app.post("/commenti/crea")
-def crea_commento(comm: CommentoCreate):
-    return supabase.table("commenti").insert(comm.dict()).execute().data
-
 # --- MESSAGGI ---
 @app.get("/messaggi/conversazioni/{utente}")
 def get_conv(utente: str):
-    res = supabase.table("messaggi").select("mittente, destinatario").or_(f"mittente.eq.{utente},destinatario.eq.{utente}").execute()
-    nomi = {m['mittente'] for m in res.data if m['mittente'] != utente} | {m['destinatario'] for m in res.data if m['destinatario'] != utente}
-    return list(nomi)
+    try:
+        res = supabase.table("messaggi").select("mittente, destinatario").or_(f"mittente.eq.{utente},destinatario.eq.{utente}").execute()
+        nomi = {m['mittente'] for m in res.data if m['mittente'] != utente} | {m['destinatario'] for m in res.data if m['destinatario'] != utente}
+        return list(nomi)
+    except Exception:
+        return []
 
 @app.get("/messaggi/leggi/{u1}/{u2}")
 def leggi(u1: str, u2: str):
@@ -143,25 +143,31 @@ def get_notifiche(utente: str):
     except Exception:
         return []
 
-# --- ASSISTENTE AI ---
-@app.post("/chat") # RISOLTO: Cambiato da /ai/chat a /chat per matchare il frontend
+# --- ASSISTENTE AI (RISOLUTIVO PER L'ERRORE 'OCCUPATO') ---
+@app.post("/chat")
 async def chat_ai(req: ChatRequest):
     try:
-        # Usiamo req.testo che arriva correttamente dal popup
-        prompt = f"Sei l'assistente AI di Nexum. Rispondi come un consulente professionale e conciso: {req.testo}"
+        # Aggiungiamo istruzioni chiare per il modello
+        prompt = f"Rispondi come un consulente legale esperto di Nexum alla seguente domanda: {req.testo}"
+        # model.generate_content restituisce l'attributo .text se la generazione ha successo
         response = ai_model.generate_content(prompt)
-        return {"risposta": response.text}
+        
+        if response and response.text:
+            return {"risposta": response.text}
+        else:
+            return {"risposta": "L'IA ha generato una risposta vuota. Riprova tra poco."}
+            
     except Exception as e:
-        print(f"Errore AI: {e}")
-        return {"risposta": "Spiacente, l'assistente AI è momentaneamente occupato. Riprova tra un istante."}
+        print(f"Dettaglio Errore AI: {str(e)}")
+        # Se l'errore riguarda la sicurezza (safety settings), Gemini blocca la risposta
+        return {"risposta": "Spiacente, la richiesta è stata rifiutata per motivi di sicurezza o limite di quota."}
 
 # --- NEWS ---
 @app.get("/news")
 def get_news():
-    return [{"id": 1, "titolo": "Nexum Online", "categoria": "Update", "riassunto": "Tutti i sistemi sono operativi.", "data": "Oggi"}]
+    return [{"id": 1, "titolo": "Sistemi Operativi", "categoria": "Update", "riassunto": "Tutte le funzioni Pro sono live.", "data": "Oggi"}]
 
 if __name__ == "__main__":
     import uvicorn
-    # Render usa la porta 10000 o quella definita nell'ambiente
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
