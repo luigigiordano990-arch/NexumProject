@@ -73,8 +73,13 @@ async def login(credenziali: dict):
 # --- POSTS ---
 @app.get("/posts")
 def get_posts():
-    res = supabase.table("posts").select("*").order("created_at", desc=True).execute()
-    return res.data
+    try:
+        res = supabase.table("posts").select("*").order("created_at", desc=True).execute()
+        # Se non ci sono post, restituiamo una lista vuota [] invece di errore
+        return res.data if res.data else []
+    except Exception as e:
+        print(f"Errore caricamento post: {e}")
+        return []
 
 @app.post("/posts/crea")
 def crea_post(post: PostCreate):
@@ -110,3 +115,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
